@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Quiz
@@ -384,6 +385,7 @@ fun QuizScreen(
                             language = language,
                             difficulty = quizUiState.difficulty,
                             topic = quizUiState.topic,
+                            isOfflineBank = quizUiState.isOfflineBank,
                             correctCount = correctCount,
                             answeredCount = answeredCount,
                             totalCount = questions.size,
@@ -804,6 +806,7 @@ private fun QuizScoreBanner(
     language: AppLanguage,
     difficulty: QuizDifficulty,
     topic: QuizTopic,
+    isOfflineBank: Boolean,
     correctCount: Int,
     answeredCount: Int,
     totalCount: Int,
@@ -849,7 +852,10 @@ private fun QuizScoreBanner(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     Text(
                         text = s.quizScoreSummary(animatedCorrect, animatedAnswered, totalCount),
                         style = MaterialTheme.typography.titleMedium,
@@ -860,6 +866,32 @@ private fun QuizScoreBanner(
                         style = MaterialTheme.typography.labelSmall,
                         color = palette.textSecondary
                     )
+                    if (isOfflineBank) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = palette.badgeBg,
+                            border = BorderStroke(0.7.dp, palette.goldBorder),
+                            modifier = Modifier.testTag("quiz_offline_bank_badge")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.CloudOff,
+                                    contentDescription = s.offlineQuizBankBadge,
+                                    tint = palette.goldPrimary,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = s.offlineQuizBankBadge,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.goldPrimary
+                                )
+                            }
+                        }
+                    }
                 }
                 AnimatedVisibility(visible = answeredCount > 0) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

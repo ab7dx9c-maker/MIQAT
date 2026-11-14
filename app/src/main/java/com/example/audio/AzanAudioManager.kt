@@ -8,6 +8,7 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.util.Log
 import com.example.data.model.AzanPreset
+import com.example.util.NetworkStatusHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -112,6 +113,11 @@ class AzanAudioManager(private val context: Context) {
 
         if (preset.isSynthesizer || preset.streamUrl.isNullOrBlank()) {
             startHijazSynthesizer(preset.arabicTitle)
+            return
+        }
+
+        if (!NetworkStatusHelper.isOnline(context)) {
+            startHijazSynthesizer("${preset.arabicTitle} (بدون إنترنت)")
             return
         }
 

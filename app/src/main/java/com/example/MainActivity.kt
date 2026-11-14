@@ -185,6 +185,7 @@ fun MeeqatAppRoot(viewModel: MeeqatViewModel) {
                     language = language,
                     isRefreshingLocation = uiState.isRefreshingLocation,
                     masterAlertsEnabled = uiState.prefs.masterAlertsEnabled,
+                    isOnline = uiState.isOnline,
                     schedule = uiState.schedule,
                     onToggleAlerts = {
                         if (!uiState.prefs.masterAlertsEnabled) {
@@ -300,6 +301,7 @@ fun MeeqatAppRoot(viewModel: MeeqatViewModel) {
                             MeeqatTab.COMPANION -> CompanionScreen(
                                 messages = uiState.chatMessages,
                                 companionState = uiState.companionState,
+                                isOnline = uiState.isOnline,
                                 onSendQuery = { viewModel.sendCompanionQuery(it) }
                             )
                         }

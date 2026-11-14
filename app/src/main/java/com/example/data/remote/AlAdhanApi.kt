@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import android.content.Context
 import android.icu.util.IslamicCalendar
 import android.os.Build
 import android.util.Log
@@ -7,9 +8,11 @@ import com.example.data.model.DayPrayerSchedule
 import com.example.data.model.HijriDateInfo
 import com.example.data.model.PrayerKey
 import com.example.data.model.PrayerTimeItem
+import com.example.util.NetworkStatusHelper
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import okhttp3.OkHttpClient
+import org.json.JSONObject
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.GET
@@ -17,7 +20,6 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit
@@ -30,6 +32,8 @@ import kotlin.math.sin
 import kotlin.math.tan
 
 private const val TAG = "AlAdhanRepository"
+private const val PREF_CACHE_NAME = "meeqat_prayer_cache"
+private const val KEY_CACHE_ENTRY = "latest_schedule_json"
 
 @JsonClass(generateAdapter = true)
 data class AlAdhanResponse(
@@ -101,10 +105,14 @@ interface AlAdhanService {
     ): AlAdhanResponse
 }
 
-class PrayerRepository {
+class PrayerRepository(private val context: Context) {
+    private val cachePrefs by lazy {
+        context.applicationContext.getSharedPreferences(PREF_CACHE_NAME, Context.MODE_PRIVATE)
+    }
+
     private val okHttp = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(6, TimeUnit.SECONDS)
         .build()
 
     private val api: AlAdhanService = Retrofit.Builder()
@@ -124,6 +132,23 @@ class PrayerRepository {
         val dateStr = SimpleDateFormat("dd-MM-yyyy", Locale.US).format(now.time)
         val gregAr = SimpleDateFormat("d MMMM yyyy م", Locale("ar")).format(now.time)
         val gregEn = SimpleDateFormat("d MMM yyyy", Locale.ENGLISH).format(now.time)
+        val cacheKey = buildCacheKey(dateStr, latitude, longitude)
+
+        // Instant offline path: skip network timeout completely when offline
+        if (!NetworkStatusHelper.isOnline(context)) {
+            loadCachedSchedule(cacheKey, iqamahMinutes, mutedPrayers, gregAr, gregEn)?.let {
+                return it
+            }
+            return buildOfflineAstronomicalSchedule(
+                latitude = latitude,
+                longitude = longitude,
+                now = now,
+                iqamahMinutes = iqamahMinutes,
+                mutedPrayers = mutedPrayers,
+                gregAr = gregAr,
+                gregEn = gregEn
+            )
+        }
 
         return try {
             val response = api.getTimings(
@@ -151,28 +176,126 @@ class PrayerRepository {
                 weekdayArabic = data.date.hijri.weekday.ar,
                 weekdayEnglish = data.date.hijri.weekday.en ?: SimpleDateFormat("EEEE", Locale.ENGLISH).format(now.time)
             )
+            val methodAr = data.meta?.method?.name ?: "أم القرى"
+            val methodEn = data.meta?.method?.name ?: "Umm Al-Qura"
+            saveCachedSchedule(cacheKey, rawMap, hijri, methodAr, methodEn)
             DayPrayerSchedule(
                 prayers = items,
                 hijriDate = hijri,
                 gregorianArabicDate = gregAr,
                 gregorianEnglishDate = gregEn,
                 isFromApi = true,
-                methodNameAr = data.meta?.method?.name ?: "أم القرى",
-                methodNameEn = data.meta?.method?.name ?: "Umm Al-Qura"
+                methodNameAr = methodAr,
+                methodNameEn = methodEn
             )
         } catch (e: Exception) {
-            Log.w(TAG, "Falling back to offline astronomical calculation: ${e.message}")
-            val fallbackTimes = calculateOfflineTimes(latitude, longitude, now)
-            val items = buildPrayerItems(fallbackTimes, iqamahMinutes, mutedPrayers)
+            Log.w(TAG, "API unavailable, using cached/offline calculation: ${e.message}")
+            loadCachedSchedule(cacheKey, iqamahMinutes, mutedPrayers, gregAr, gregEn)
+                ?: buildOfflineAstronomicalSchedule(
+                    latitude = latitude,
+                    longitude = longitude,
+                    now = now,
+                    iqamahMinutes = iqamahMinutes,
+                    mutedPrayers = mutedPrayers,
+                    gregAr = gregAr,
+                    gregEn = gregEn
+                )
+        }
+    }
+
+    private fun buildOfflineAstronomicalSchedule(
+        latitude: Double,
+        longitude: Double,
+        now: Calendar,
+        iqamahMinutes: Int,
+        mutedPrayers: Set<PrayerKey>,
+        gregAr: String,
+        gregEn: String
+    ): DayPrayerSchedule {
+        val fallbackTimes = calculateOfflineTimes(latitude, longitude, now)
+        val items = buildPrayerItems(fallbackTimes, iqamahMinutes, mutedPrayers)
+        return DayPrayerSchedule(
+            prayers = items,
+            hijriDate = getLocalHijriDate(now),
+            gregorianArabicDate = gregAr,
+            gregorianEnglishDate = gregEn,
+            isFromApi = false,
+            methodNameAr = "حساب فلكي محلي (بدون إنترنت)",
+            methodNameEn = "Local Astronomical (Offline)"
+        )
+    }
+
+    private fun buildCacheKey(dateStr: String, lat: Double, lon: Double): String =
+        "$dateStr|${String.format(Locale.US, "%.2f,%.2f", lat, lon)}"
+
+    private fun saveCachedSchedule(
+        cacheKey: String,
+        rawMap: Map<PrayerKey, String>,
+        hijri: HijriDateInfo,
+        methodAr: String,
+        methodEn: String
+    ) {
+        try {
+            val timingsJson = JSONObject().apply {
+                rawMap.forEach { (key, value) -> put(key.name, value) }
+            }
+            val hijriJson = JSONObject().apply {
+                put("day", hijri.day)
+                put("monthArabic", hijri.monthArabic)
+                put("monthEnglish", hijri.monthEnglish)
+                put("year", hijri.year)
+                put("weekdayArabic", hijri.weekdayArabic)
+                put("weekdayEnglish", hijri.weekdayEnglish)
+            }
+            val root = JSONObject().apply {
+                put("key", cacheKey)
+                put("timings", timingsJson)
+                put("hijri", hijriJson)
+                put("methodAr", methodAr)
+                put("methodEn", methodEn)
+            }
+            cachePrefs.edit().putString(KEY_CACHE_ENTRY, root.toString()).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed saving prayer cache: ${e.message}")
+        }
+    }
+
+    private fun loadCachedSchedule(
+        cacheKey: String,
+        iqamahMinutes: Int,
+        mutedPrayers: Set<PrayerKey>,
+        gregAr: String,
+        gregEn: String
+    ): DayPrayerSchedule? {
+        return try {
+            val json = cachePrefs.getString(KEY_CACHE_ENTRY, null) ?: return null
+            val root = JSONObject(json)
+            if (root.optString("key") != cacheKey) return null
+            val timingsObj = root.getJSONObject("timings")
+            val rawMap = PrayerKey.entries.associateWith { key ->
+                timingsObj.optString(key.name).ifBlank { return null }
+            }
+            val hijriObj = root.getJSONObject("hijri")
+            val hijri = HijriDateInfo(
+                day = hijriObj.optString("day"),
+                monthArabic = hijriObj.optString("monthArabic"),
+                monthEnglish = hijriObj.optString("monthEnglish"),
+                year = hijriObj.optString("year"),
+                weekdayArabic = hijriObj.optString("weekdayArabic"),
+                weekdayEnglish = hijriObj.optString("weekdayEnglish")
+            )
             DayPrayerSchedule(
-                prayers = items,
-                hijriDate = getLocalHijriDate(now),
+                prayers = buildPrayerItems(rawMap, iqamahMinutes, mutedPrayers),
+                hijriDate = hijri,
                 gregorianArabicDate = gregAr,
                 gregorianEnglishDate = gregEn,
                 isFromApi = false,
-                methodNameAr = "حساب فلكي محلي",
-                methodNameEn = "Local Astronomical"
+                methodNameAr = "محفوظ محلياً (بدون إنترنت)",
+                methodNameEn = "Cached Locally (Offline)"
             )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed reading prayer cache: ${e.message}")
+            null
         }
     }
 

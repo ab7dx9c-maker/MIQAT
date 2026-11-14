@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -56,6 +58,7 @@ import com.example.ui.theme.StatusCrimsonBright
 fun CompanionScreen(
     messages: List<AiChatMessage>,
     companionState: CompanionUiState,
+    isOnline: Boolean,
     onSendQuery: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -84,6 +87,36 @@ fun CompanionScreen(
                 .widthIn(max = 600.dp)
                 .padding(bottom = 84.dp)
         ) {
+            AnimatedVisibility(visible = !isOnline) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = palette.badgeBg,
+                    border = BorderStroke(0.8.dp, palette.goldBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .testTag("companion_offline_notice")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CloudOff,
+                            contentDescription = s.offlineCompanionHint,
+                            tint = palette.goldPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = s.offlineCompanionHint,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = palette.goldPrimary
+                        )
+                    }
+                }
+            }
+
             // Quick suggestion chips
             Row(
                 modifier = Modifier

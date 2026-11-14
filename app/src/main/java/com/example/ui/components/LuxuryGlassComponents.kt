@@ -41,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MenuBook
@@ -357,6 +358,7 @@ fun MeeqatTopHeader(
     language: AppLanguage,
     isRefreshingLocation: Boolean,
     masterAlertsEnabled: Boolean,
+    isOnline: Boolean,
     schedule: DayPrayerSchedule?,
     onToggleAlerts: () -> Unit,
     onRefreshGps: () -> Unit,
@@ -516,6 +518,37 @@ fun MeeqatTopHeader(
                         text = "  •  $gregText",
                         style = MaterialTheme.typography.labelSmall,
                         color = palette.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = !isOnline) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = palette.badgeBg,
+                border = BorderStroke(0.8.dp, palette.goldAccent.copy(alpha = 0.65f)),
+                modifier = Modifier
+                    .padding(top = 5.dp)
+                    .testTag("header_offline_badge")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CloudOff,
+                        contentDescription = s.offlineStatusBadge,
+                        tint = palette.goldPrimary,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = s.offlineStatusBadge,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.goldPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

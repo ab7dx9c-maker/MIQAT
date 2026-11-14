@@ -18,6 +18,8 @@ import com.example.audio.AzanPlaybackState
 import com.example.data.local.AdhkarCatalog
 import com.example.data.local.MeeqatPreferencesRepository
 import com.example.data.local.MeeqatUserPrefs
+import com.example.data.local.OfflineIslamicGuide
+import com.example.data.local.OfflineIslamicQuizBank
 import com.example.data.model.AdhkarCategory
 import com.example.data.model.AdhkarItem
 import com.example.data.model.AiChatMessage
@@ -42,6 +44,7 @@ import com.example.location.MeeqatLocationHelper
 import com.example.notifications.MeeqatNotificationHelper
 import com.example.sensor.QiblaCalculator
 import com.example.sensor.QiblaSensorManager
+import com.example.util.NetworkStatusHelper
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
@@ -101,7 +104,8 @@ data class MeeqatMainUiState(
     val quizTopic: QuizTopic = QuizTopic.HISTORY_THEOLOGY,
     val quizCount: Int = 5,
     val quizUiState: QuizUiState = QuizUiState.Idle,
-    val quizSelectedAnswers: Map<String, Int> = emptyMap()
+    val quizSelectedAnswers: Map<String, Int> = emptyMap(),
+    val isOnline: Boolean = true
 )
 
 private data class QuizPanelState(
@@ -115,7 +119,7 @@ private data class QuizPanelState(
 class MeeqatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefsRepo = MeeqatPreferencesRepository(application)
-    private val prayerRepo = PrayerRepository()
+    private val prayerRepo = PrayerRepository(application)
     private val locationHelper = MeeqatLocationHelper(application)
     private val qiblaSensor = QiblaSensorManager(application)
     val audioManager = AzanAudioManager(application)
@@ -196,6 +200,7 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
     )
     private val _companionState = MutableStateFlow<CompanionUiState>(CompanionUiState.Idle)
     private val _quizPanelState = MutableStateFlow(QuizPanelState())
+    private val _isOnline = MutableStateFlow(NetworkStatusHelper.isOnline(application))
 
     private var latestPrefs = MeeqatUserPrefs()
     private var lastLoadedCoordKey: String? = null
@@ -221,7 +226,8 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
         _preferCustomAzan,
         _chatMessages,
         _companionState,
-        _quizPanelState
+        _quizPanelState,
+        _isOnline
     ) { values ->
         val tab = values[0] as MeeqatTab
         val prefs = values[1] as MeeqatUserPrefs
@@ -242,6 +248,7 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
         val messages = values[14] as List<AiChatMessage>
         val compState = values[15] as CompanionUiState
         val quizState = values[16] as QuizPanelState
+        val online = values[17] as Boolean
 
         MeeqatMainUiState(
             activeTab = tab,
@@ -266,18 +273,36 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
             quizTopic = quizState.topic,
             quizCount = quizState.count,
             quizUiState = quizState.uiState,
-            quizSelectedAnswers = quizState.selectedAnswers
+            quizSelectedAnswers = quizState.selectedAnswers,
+            isOnline = online
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
-        initialValue = MeeqatMainUiState(hasCompassSensor = qiblaSensor.hasCompassSensor)
+        initialValue = MeeqatMainUiState(
+            hasCompassSensor = qiblaSensor.hasCompassSensor,
+            isOnline = NetworkStatusHelper.isOnline(application)
+        )
     )
 
     init {
         observePreferences()
+        observeNetworkStatus()
         observeCompassSensor()
         startLiveClockLoop()
+    }
+
+    private fun observeNetworkStatus() {
+        viewModelScope.launch {
+            var wasOnline = _isOnline.value
+            NetworkStatusHelper.observeOnlineStatus(getApplication()).collect { online ->
+                _isOnline.value = online
+                if (online && !wasOnline && _schedule.value?.isFromApi == false) {
+                    fetchSchedule(latestPrefs)
+                }
+                wasOnline = online
+            }
+        }
     }
 
     private fun observePreferences() {
@@ -782,18 +807,43 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // Gemini AI Islamic Companion
+    // Gemini AI Islamic Companion (with seamless Offline Local Guide)
     fun sendCompanionQuery(userQuery: String) {
         val trimmed = userQuery.trim()
         if (trimmed.isEmpty() || _companionState.value == CompanionUiState.Loading ||
             _companionState.value == CompanionUiState.Streaming
         ) return
 
+        val lang = latestPrefs.language
         val userMsg = AiChatMessage(
             id = "u-${System.currentTimeMillis()}",
             isUser = true,
             text = trimmed
         )
+
+        fun buildLocalAnswer(): String = OfflineIslamicGuide.answer(
+            query = trimmed,
+            language = lang,
+            cityName = latestPrefs.displayCity(lang),
+            hijriDate = _schedule.value?.hijriDate?.formatted(lang),
+            nextPrayerName = _countdown.value?.nextPrayerName,
+            nextPrayerTime = _countdown.value?.nextAzanDisplay,
+            remaining = _countdown.value?.formattedRemaining
+        )
+
+        // Instant offline guide path when no internet is available
+        if (!NetworkStatusHelper.isOnline(getApplication())) {
+            val localMsg = AiChatMessage(
+                id = "m-local-${System.currentTimeMillis() + 1}",
+                isUser = false,
+                text = buildLocalAnswer(),
+                isStreaming = false
+            )
+            _chatMessages.value = _chatMessages.value + userMsg + localMsg
+            _companionState.value = CompanionUiState.Idle
+            return
+        }
+
         val modelMsgId = "m-${System.currentTimeMillis() + 1}"
         _chatMessages.value = _chatMessages.value + userMsg + AiChatMessage(
             id = modelMsgId,
@@ -803,7 +853,6 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
         )
         _companionState.value = CompanionUiState.Loading
 
-        val lang = latestPrefs.language
         val contextPrompt = buildString {
             appendLine(
                 if (lang == AppLanguage.ENGLISH) {
@@ -839,31 +888,29 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
                     updateStreamMessage(modelMsgId, buffer.toString(), streaming = false)
                     _companionState.value = CompanionUiState.Idle
                 } else {
-                    removeEmptyMessage(modelMsgId)
-                    _companionState.value = CompanionUiState.Error(
-                        if (lang == AppLanguage.ENGLISH) "No response received. Please try again."
-                        else "لم يتم استلام رد من المرشد الذكي. حاول مرة أخرى."
-                    )
+                    updateStreamMessage(modelMsgId, buildLocalAnswer(), streaming = false)
+                    _companionState.value = CompanionUiState.Idle
                 }
             } catch (e: TimeoutCancellationException) {
-                Log.e(TAG, "Gemini streaming timed out", e)
-                removeEmptyMessage(modelMsgId)
-                _companionState.value = CompanionUiState.Error(
-                    if (lang == AppLanguage.ENGLISH) "Request timed out after 60 seconds. Please try again."
-                    else "انتهت مهلة الاتصال (60 ثانية). يرجى المحاولة مرة أخرى."
-                )
+                Log.w(TAG, "Gemini streaming timed out, falling back to OfflineIslamicGuide", e)
+                if (buffer.isBlank()) {
+                    updateStreamMessage(modelMsgId, buildLocalAnswer(), streaming = false)
+                    _companionState.value = CompanionUiState.Idle
+                } else {
+                    updateStreamMessage(modelMsgId, buffer.toString(), streaming = false)
+                    _companionState.value = CompanionUiState.Idle
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Gemini AI call failed", e)
-                removeEmptyMessage(modelMsgId)
-                _companionState.value = CompanionUiState.Error(
-                    e.localizedMessage ?: if (lang == AppLanguage.ENGLISH) {
-                        "Unable to reach Smart Guide right now."
-                    } else {
-                        "تعذر الاتصال بالمرشد الذكي حالياً."
-                    }
-                )
+                Log.w(TAG, "Gemini AI call failed, falling back to OfflineIslamicGuide", e)
+                if (buffer.isBlank()) {
+                    updateStreamMessage(modelMsgId, buildLocalAnswer(), streaming = false)
+                    _companionState.value = CompanionUiState.Idle
+                } else {
+                    updateStreamMessage(modelMsgId, buffer.toString(), streaming = false)
+                    _companionState.value = CompanionUiState.Idle
+                }
             }
         }
     }
@@ -958,6 +1005,26 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
             appendLine("Ensure each question has exactly 4 distinct options, an accurate 0-based correctIndex (0..3), and a brief factual explanation.")
         }
 
+        // Instant offline question bank when device has no internet
+        if (!NetworkStatusHelper.isOnline(getApplication())) {
+            val localQuestions = OfflineIslamicQuizBank.getQuestions(
+                difficulty = difficulty,
+                topic = topic,
+                count = count,
+                language = lang
+            )
+            _quizPanelState.value = currentPanel.copy(
+                uiState = QuizUiState.Ready(
+                    questions = localQuestions,
+                    difficulty = difficulty,
+                    topic = topic,
+                    isOfflineBank = true
+                ),
+                selectedAnswers = emptyMap()
+            )
+            return
+        }
+
         _quizPanelState.value = currentPanel.copy(
             uiState = QuizUiState.Loading,
             selectedAnswers = emptyMap()
@@ -969,10 +1036,7 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
                     quizModel.generateContent(prompt)
                 }
                 val jsonString = response.text
-                    ?: throw IllegalStateException(
-                        if (lang == AppLanguage.ENGLISH) "No quiz data returned."
-                        else "لم يتم استلام بيانات الأسئلة."
-                    )
+                    ?: throw IllegalStateException("No quiz data returned.")
 
                 val root = JSONObject(jsonString)
                 val questionsArray = root.getJSONArray("questions")
@@ -1004,10 +1068,13 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (parsed.isEmpty()) {
+                    val localFallback = OfflineIslamicQuizBank.getQuestions(difficulty, topic, count, lang)
                     _quizPanelState.value = _quizPanelState.value.copy(
-                        uiState = QuizUiState.Error(
-                            if (lang == AppLanguage.ENGLISH) "Could not generate valid questions. Please try again."
-                            else "تعذر تكوين أسئلة صالحة، يرجى المحاولة مرة أخرى."
+                        uiState = QuizUiState.Ready(
+                            questions = localFallback,
+                            difficulty = difficulty,
+                            topic = topic,
+                            isOfflineBank = true
                         )
                     )
                 } else {
@@ -1015,29 +1082,33 @@ class MeeqatViewModel(application: Application) : AndroidViewModel(application) 
                         uiState = QuizUiState.Ready(
                             questions = parsed,
                             difficulty = difficulty,
-                            topic = topic
+                            topic = topic,
+                            isOfflineBank = false
                         )
                     )
                 }
             } catch (e: TimeoutCancellationException) {
-                Log.e(TAG, "Quiz generation timed out", e)
+                Log.w(TAG, "Quiz generation timed out, falling back to OfflineIslamicQuizBank", e)
+                val localFallback = OfflineIslamicQuizBank.getQuestions(difficulty, topic, count, lang)
                 _quizPanelState.value = _quizPanelState.value.copy(
-                    uiState = QuizUiState.Error(
-                        if (lang == AppLanguage.ENGLISH) "Question generation timed out after 60 seconds. Please try again."
-                        else "انتهت مهلة إنشاء الأسئلة (60 ثانية). يرجى المحاولة مرة أخرى."
+                    uiState = QuizUiState.Ready(
+                        questions = localFallback,
+                        difficulty = difficulty,
+                        topic = topic,
+                        isOfflineBank = true
                     )
                 )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to generate Islamic quiz", e)
+                Log.w(TAG, "Online quiz generation failed, falling back to OfflineIslamicQuizBank", e)
+                val localFallback = OfflineIslamicQuizBank.getQuestions(difficulty, topic, count, lang)
                 _quizPanelState.value = _quizPanelState.value.copy(
-                    uiState = QuizUiState.Error(
-                        e.localizedMessage ?: if (lang == AppLanguage.ENGLISH) {
-                            "Unable to generate questions right now."
-                        } else {
-                            "تعذر إنشاء الأسئلة الدينية حالياً."
-                        }
+                    uiState = QuizUiState.Ready(
+                        questions = localFallback,
+                        difficulty = difficulty,
+                        topic = topic,
+                        isOfflineBank = true
                     )
                 )
             }

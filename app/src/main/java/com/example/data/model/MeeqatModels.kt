@@ -397,7 +397,8 @@ sealed interface QuizUiState {
     data class Ready(
         val questions: List<IslamicQuizQuestion>,
         val difficulty: QuizDifficulty,
-        val topic: QuizTopic
+        val topic: QuizTopic,
+        val isOfflineBank: Boolean = false
     ) : QuizUiState
     data class Error(val message: String) : QuizUiState
 }

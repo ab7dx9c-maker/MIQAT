@@ -131,7 +131,12 @@ data class MeeqatStrings(
     val comfortableReadingTitle: String,
     val comfortableReadingSubtitle: String,
     val comfortableReadingBadgeOn: String,
-    val comfortableReadingBadgeOff: String
+    val comfortableReadingBadgeOff: String,
+
+    // Offline Mode Badges
+    val offlineStatusBadge: String,
+    val offlineQuizBankBadge: String,
+    val offlineCompanionHint: String
 )
 
 val ArabicStrings = MeeqatStrings(
@@ -261,7 +266,11 @@ val ArabicStrings = MeeqatStrings(
     comfortableReadingTitle = "وضع القراءة المريح",
     comfortableReadingSubtitle = "تقليل تباين الشاشة وتغيير الخط إلى النسخ الكلاسيكي للأذكار والأسئلة الدينية في الإضاءة الخافتة",
     comfortableReadingBadgeOn = "وضع القراءة المريح مفعّل • خط النسخ الكلاسيكي",
-    comfortableReadingBadgeOff = "وضع القراءة المريح (تباين هادئ + خط النسخ)"
+    comfortableReadingBadgeOff = "وضع القراءة المريح (تباين هادئ + خط النسخ)",
+
+    offlineStatusBadge = "بدون إنترنت • المواقيت والأذكار تعمل محلياً",
+    offlineQuizBankBadge = "بنك الأسئلة المحلي (بدون إنترنت)",
+    offlineCompanionHint = "وضع عدم الاتصال: يتم الرد من دليل ميقات المحلي الموثق"
 )
 
 val EnglishStrings = MeeqatStrings(
@@ -391,7 +400,11 @@ val EnglishStrings = MeeqatStrings(
     comfortableReadingTitle = "Comfortable Reading Mode",
     comfortableReadingSubtitle = "Reduces screen contrast & uses classic Naskh script for Adhkar & Religious Quiz in low light",
     comfortableReadingBadgeOn = "Comfort Reading On • Classic Naskh",
-    comfortableReadingBadgeOff = "Comfort Reading Mode (Low Contrast + Naskh)"
+    comfortableReadingBadgeOff = "Comfort Reading Mode (Low Contrast + Naskh)",
+
+    offlineStatusBadge = "Offline Mode • Local Timings & Adhkar Active",
+    offlineQuizBankBadge = "Local Question Bank (Offline)",
+    offlineCompanionHint = "Offline Mode: Answered using Meeqat's local authentic guide"
 )
 
 val LocalMeeqatStrings = staticCompositionLocalOf { ArabicStrings }

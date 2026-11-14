@@ -3,6 +3,8 @@ package com.example.location
 import android.annotation.SuppressLint
 import android.content.Context
 import android.location.Geocoder
+import android.location.Location
+import android.location.LocationManager
 import android.os.Build
 import android.util.Log
 import com.example.data.local.AdhkarCatalog
@@ -37,7 +39,7 @@ class MeeqatLocationHelper(private val context: Context) {
     suspend fun fetchCoarseLocation(): DetectedLocation? = withContext(Dispatchers.IO) {
         try {
             val location = withTimeoutOrNull(8_000L) {
-                suspendCancellableCoroutine<android.location.Location?> { cont ->
+                suspendCancellableCoroutine<Location?> { cont ->
                     val tokenSource = CancellationTokenSource()
                     cont.invokeOnCancellation { tokenSource.cancel() }
                     fusedClient.getCurrentLocation(
@@ -57,7 +59,7 @@ class MeeqatLocationHelper(private val context: Context) {
                         }.addOnFailureListener { cont.resume(null) }
                     }
                 }
-            } ?: return@withContext null
+            } ?: getLastKnownPlatformLocation() ?: return@withContext null
 
             val ar = resolveCityCountry(location.latitude, location.longitude, Locale("ar"))
             val en = resolveCityCountry(location.latitude, location.longitude, Locale.ENGLISH)
@@ -71,6 +73,28 @@ class MeeqatLocationHelper(private val context: Context) {
             )
         } catch (e: Exception) {
             Log.w(TAG, "Unable to fetch GPS location: ${e.message}")
+            null
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun getLastKnownPlatformLocation(): Location? {
+        return try {
+            val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                ?: return null
+            val providers = listOf(
+                LocationManager.GPS_PROVIDER,
+                LocationManager.NETWORK_PROVIDER,
+                LocationManager.PASSIVE_PROVIDER
+            )
+            providers.mapNotNull { provider ->
+                try {
+                    lm.getLastKnownLocation(provider)
+                } catch (_: Exception) {
+                    null
+                }
+            }.maxByOrNull { it.time }
+        } catch (_: Exception) {
             null
         }
     }
