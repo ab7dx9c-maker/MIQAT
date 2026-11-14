@@ -1,0 +1,6 @@
+{
+  "name": "ميقات",
+  "description": "تطبيق ميقات لمواقيت الصلاة، بوصلة القبلة، السبحة الإلكترونية، الأذكار اليومية، والرفيق الإسلامي الذكي.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
